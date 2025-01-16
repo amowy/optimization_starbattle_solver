@@ -102,16 +102,16 @@ impl Board {
     fn calculate_score(&self) -> i32 {
         let mut score = 0;
 
-        let row_col_penalty= 1;
-        let region_penalty = 1;
-        let adjacency_penalty = 1;
+        let row_col_penalty= 6;
+        let region_penalty = 10;
+        let adjacency_penalty = 4;
         let starcount_penalty = 10;
 
 
         //extra rule to push these algorithms towards the right solution
         score -= (self.stars.len() as i32 - (self.stars_per_row * self.regions.len()) as i32).abs() * starcount_penalty;
         if !self.is_valid() {
-            score -= 10;
+            score -= 20;
         }
 
         // count violations
@@ -359,7 +359,7 @@ impl AntColonySolver {
             }
 
             if iteration % 10 == 0 {
-                println!("Iteration {}/{}, Best score: {}", iteration, self.iterations, best_score);
+                //println!("Iteration {}/{}, Best score: {}", iteration, self.iterations, best_score);
             }
         }
 
@@ -530,7 +530,7 @@ impl HybridSolver {
 
         while temperature > 0.1 && temperature_stages < max_temperature_stages {
             temperature_stages += 1;
-            println!("Temperature stage {}, temp: {:.2}", temperature_stages, temperature);
+            //println!("Temperature stage {}, temp: {:.2}", temperature_stages, temperature);
 
             // ACO phase
             for ant in 0..self.num_ants {
@@ -597,8 +597,8 @@ impl HybridSolver {
                 if current_score > best_score {
                     best_board = current_board.clone();
                     best_score = current_score;
-                    println!("New best score: {} (Ant {}, Temperature stage {})", 
-                        best_score, ant + 1, temperature_stages);
+                    //println!("New best score: {} (Ant {}, Temperature stage {})", 
+                    //    best_score, ant + 1, temperature_stages);
                 }
                 // update pheromones
                 self.update_pheromones(&mut pheromones, &current_board, current_score);
@@ -662,20 +662,139 @@ impl HybridSolver {
     }
 }
 
+struct EvolutionarySolver {
+    population_size: usize,
+    generations: usize,
+    mutation_rate: f64,
+}
+
+impl EvolutionarySolver {
+    fn new(population_size: usize, generations: usize, mutation_rate: f64) -> Self {
+        EvolutionarySolver {
+            population_size,
+            generations,
+            mutation_rate,
+        }
+    }
+
+    fn solve(&self, board: &Board) -> (Board, Duration) {
+        let start_time = Instant::now();
+        let mut rng = rand::thread_rng();
+
+        // Initialize population
+        let mut population: Vec<Board> = (0..self.population_size)
+            .map(|_| {
+                let mut new_board = board.clone();
+                new_board.initialize_random();
+                new_board
+            })
+            .collect();
+
+        // Evolution loop
+        for generation in 0..self.generations {
+            // Evaluate fitness
+            let mut fitness: Vec<(Board, i32)> = population
+                .iter()
+                .map(|b| (b.clone(), b.calculate_score()))
+                .collect();
+
+            // Sort by fitness (higher is better)
+            fitness.sort_by_key(|&(_, score)| -score);
+
+            // Selection (retain top 50%)
+            let survivors: Vec<Board> = fitness
+                .iter()
+                .take(self.population_size / 2)
+                .map(|(board, _)| board.clone())
+                .collect();
+
+            // Generate new population
+            let mut new_population = Vec::new();
+
+            // Crossover
+            while new_population.len() < self.population_size {
+                // Select two parents
+                let parent1 = &survivors[rng.gen_range(0..survivors.len())];
+                let parent2 = &survivors[rng.gen_range(0..survivors.len())];
+
+                // Create offspring
+                let child = self.crossover(parent1, parent2);
+                new_population.push(child);
+            }
+
+            // Mutation
+            for individual in new_population.iter_mut() {
+                self.mutate(individual);
+            }
+
+            population = new_population;
+        }
+
+        // Return the best solution
+        let (best_board, _) = population
+            .iter()
+            .map(|b| (b.clone(), b.calculate_score()))
+            .max_by_key(|&(_, score)| score)
+            .unwrap();
+
+        (best_board, start_time.elapsed())
+    }
+
+    fn crossover(&self, parent1: &Board, parent2: &Board) -> Board {
+        let mut rng = rand::thread_rng();
+        let mut child = parent1.clone();
+
+        // Combine regions randomly
+        for region in parent1.regions.iter() {
+            if rng.gen_bool(0.5) {
+                // Take stars from parent2 for this region
+                for &(row, col) in region {
+                    if parent2.stars.contains(&(row, col)) {
+                        child.stars.insert((row, col));
+                    } else {
+                        child.stars.remove(&(row, col));
+                    }
+                }
+            }
+        }
+
+        child
+    }
+
+    fn mutate(&self, board: &mut Board) {
+        let mut rng = rand::thread_rng();
+
+        if rng.gen_bool(self.mutation_rate) {
+            // Add a random mutation
+            let row = rng.gen_range(0..board.size);
+            let col = rng.gen_range(0..board.size);
+
+            if board.stars.contains(&(row, col)) {
+                board.stars.remove(&(row, col));
+            } else {
+                board.stars.insert((row, col));
+            }
+        }
+    }
+}
+
+
 // Tests
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn simple_table() -> Board {
-        let size = 3;
+        let size = 4;
         let mut regions = Vec::new();
-        let region1: HashSet<(usize, usize)> = vec![(0,0), (0,1), (0,2),
-            (1,2), (2,2)
-        ].into_iter().collect();
-        let region2: HashSet<(usize, usize)> = vec![(1,0), (1,1), (2,0), (2,1)].into_iter().collect();
+        let region1: HashSet<(usize, usize)> = vec![(0,0), (0,1), (0,2), (0,3), (1,3)].into_iter().collect();
+        let region2: HashSet<(usize, usize)> = vec![(1,0), (1,1), (1,2), (2,0)].into_iter().collect();
+        let region3: HashSet<(usize, usize)> = vec![(3,0), (3,1), (3,2), (2,1), (2,2)].into_iter().collect();
+        let region4: HashSet<(usize, usize)> = vec![(2,3), (3,3)].into_iter().collect();
         regions.push(region1);
         regions.push(region2);
+        regions.push(region3);
+        regions.push(region4);
         Board::new(size, regions, 1)
     }
 
@@ -713,6 +832,17 @@ mod tests {
     }
 
     #[test]
+    fn test_evolutionary() {
+        let mut board = complex_table();
+        board.init_full_stars();
+
+        let evo_solver = EvolutionarySolver::new(100, 200, 0.2);
+        let (evo_solution, evo_time) = evo_solver.solve(&board);
+        evo_solution.print_board();
+        println!("{} -- {:?} -- {}", evo_solution.calculate_score(), evo_time, evo_solution.is_valid())
+    }
+
+    #[test]
     fn test_annealing() {
         let mut board = complex_table();
         board.initialize_random();
@@ -736,8 +866,8 @@ mod tests {
 
     #[test]
     fn test_aco() {
-        let mut board = complex_table();
-        board.initialize_random();
+        let mut board = simple_table();
+        board.init_full_stars();
         let aco_solver = AntColonySolver::new(
         200,     
         300,    
@@ -748,6 +878,113 @@ mod tests {
         let (solution, duration) = aco_solver.solve(&board);
         solution.print_board();
         println!("{} -- {:?} -- {}", solution.calculate_score(), duration, solution.is_valid())
+    }
+
+    #[test]
+    fn benchmark() {
+        // Initialize all solvers
+        let aco_solver = AntColonySolver::new(200, 200, 0.1, 1.0, 2.0);
+        let sa_solver = SimulatedAnnealingSolver::new(800.0, 0.95, 120);
+        let pso_solver = PSOSolver::new(50, 10000, 0.7, 1.2, 2.0);
+        let hybrid_solver = HybridSolver::new(20, 0.5, 0.7, 0.2, 800.0, 0.95, 120);
+        let evo_solver = EvolutionarySolver::new(100, 200, 0.1);
+
+    // Test configurations
+        let test_cases = vec![
+            ("Simple Table", simple_table()),
+            ("Complex Table", complex_table()),
+        ];
+    
+        // Number of runs per solver to get average performance
+        let runs_per_solver = 3;
+    
+    // Store results for each solver
+        #[derive(Default, Clone, Copy)]
+        struct SolverStats {
+            valid_solutions: usize,
+            total_time: Duration,
+            best_score: i32,
+            avg_score: f64,
+        }
+    
+        // Create results table
+        let mut results: HashMap<(&str, &str), SolverStats> = HashMap::new();
+    
+        // Run benchmarks
+        for (table_name, initial_board) in test_cases.iter() {
+            println!("\nBenchmarking {}", table_name);
+            println!("===================");
+
+            // Test each solver
+            for (solver_name, solver) in vec![
+                ("ACO", Box::new(|board: &Board| aco_solver.solve(board)) as Box<dyn Fn(&Board) -> (Board, Duration)>),
+                ("SA", Box::new(|board: &Board| sa_solver.solve(board))),
+                ("PSO", Box::new(|board: &Board| pso_solver.solve(board))),
+                ("Hybrid", Box::new(|board: &Board| hybrid_solver.solve(board))),
+                ("Evolutionary", Box::new(|board: &Board| evo_solver.solve(board))),
+            ] {
+                println!("\nTesting {} solver", solver_name);
+                let mut stats = SolverStats::default();
+                stats.best_score = -999999;
+                let mut total_score = 0;
+                
+                for run in 0..runs_per_solver {
+                    println!("Run {}/{}", run + 1, runs_per_solver);
+
+                    // Create a fresh board for each run
+                    let mut board = initial_board.clone();
+                    board.initialize_random();
+                
+                    // Solve
+                    let (solution, duration) = solver(&board);
+                    stats.total_time += duration;
+                
+                    // Update statistics
+                    let score = solution.calculate_score();
+                    total_score += score;
+                    stats.best_score = stats.best_score.max(solution.calculate_score());
+                
+                    if solution.is_valid() {
+                        stats.valid_solutions += 1;
+                    }
+                }
+            
+                // Calculate average score
+                stats.avg_score = total_score as f64 / runs_per_solver as f64;
+            
+                // Store results
+                results.insert((table_name, solver_name), stats.clone());
+            
+                // Print interim results
+                println!("Results for {} on {}:", solver_name, table_name);
+                println!("  Valid solutions: {}/{}", stats.valid_solutions, runs_per_solver);
+                println!("  Average time: {:?}", stats.total_time / runs_per_solver as u32);
+                println!("  Best score: {}", stats.best_score);
+                println!("  Average score: {:.2}", stats.avg_score.clone());
+            }
+        }
+    
+        // Print final comparison table
+        println!("\nFinal Results");
+        println!("=============");
+        println!("{:<15} {:<10} {:<15} {:<12} {:<12} {:<15}", 
+            "Table", "Solver", "Avg Time (ms)", "Valid Sols", "Best Score", "Avg Score");
+        println!("{}", "-".repeat(80));
+    
+        for table_name in ["Simple Table", "Complex Table"] {
+            for solver_name in ["ACO", "SA", "PSO", "Hybrid", "Evolutionary"] {
+                if let Some(stats) = results.get(&(table_name, solver_name)) {
+                    println!("{:<15} {:<10} {:<15.2} {:<12} {:<12} {:<15.2}",
+                        table_name,
+                        solver_name,
+                        stats.total_time.as_millis() as f64 / runs_per_solver as f64,
+                        stats.valid_solutions,
+                        stats.best_score,
+                        stats.avg_score);
+                }
+            }
+            println!("{}", "-".repeat(80));
+        }
     }
 }
 
