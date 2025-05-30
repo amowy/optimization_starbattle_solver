@@ -1,3 +1,5 @@
+
+// pls na valami
 use rand::{Error, Rng};
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
